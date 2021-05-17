@@ -1,0 +1,177 @@
+#include <msp430.h> 
+#define TC1MS 1000
+#define RXD BIT1;
+#define TXD BIT2;
+
+
+volatile long ovrflcntr = 0;
+char n[5];
+char m[5];
+
+void waitms(int);
+void dly1ms(void);
+void floattostring(float);
+
+void inituart(void){
+
+    P1SEL = BIT2;
+    P1SEL2 = BIT2;
+    UCA0CTL1 |= UCSSEL_2;
+    waitms(10);
+    UCA0BR0 = 104;
+    waitms(10);
+    UCA0BR1 = 0;
+    waitms(10);
+    //IE2 |= UCA0RXIE|UCA0TXIE;
+    //__bis_SR_register(GIE);
+    UCA0CTL1 &= ~UCSWRST;
+
+}
+
+unsigned char uartGetchar(){
+
+    while(!(IFG2&UCA0RXIFG));
+    waitms(10);
+    return UCA0RXBUF;
+}
+
+void uartPutchar(unsigned char c){
+    waitms(10);
+    while(!(IFG2&UCA0TXIFG));
+    waitms(10);
+    UCA0TXBUF = c;
+}
+
+void uartPutstring(const char *str){
+    while(*str) uartPutchar(*str++);
+    waitms(10);
+}
+
+
+
+int main(void)
+{
+	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
+	
+	unsigned int start = 0;
+	unsigned int stop1 = 0;
+	volatile float total = 0.0;
+	volatile float insec = 0.0;
+	volatile float mph = 0.0;
+	volatile float tds = 0.0;
+	const float conversion = 113.636;
+
+	BCSCTL1 = CALBC1_1MHZ;
+	DCOCTL = CALDCO_1MHZ;
+	BCSCTL2 &= ~(DIVS_3);
+
+	TACTL = TASSEL_2 + TAIE + MC_0;
+	ovrflcntr = 0;
+	_BIS_SR(GIE);
+	__enable_interrupt();
+
+	P1DIR |= BIT0+BIT6;
+	P1OUT &= ~(BIT0+BIT6);
+	P1DIR &= ~BIT3;
+	P1DIR &= ~BIT4;
+	P1OUT = BIT6;
+
+    inituart();                         // initialize uart
+
+    uartPutchar(12);                    //clear LCD
+    __delay_cycles(5000);               //delay
+    uartPutchar(17);                    //turn backlight on
+
+
+    uartPutstring("The speed is");
+    waitms(2000);
+    uartPutchar(12);
+    
+	for (;;){
+	    ovrflcntr = 0;
+	    TACTL |= TACLR;
+	    while((P1IN & BIT4) == 0){}
+
+	    start = TAR;
+	    TACTL |= MC_2;
+	    P1OUT |= BIT0;
+
+	    while((P1IN & BIT3) == 0){}
+
+	    P1OUT &= ~BIT0;
+	    stop1 = TAR;  //save value of timer after button 2 press
+	    TACTL = TASSEL_2 + TAIE + MC_0;
+	    total = ((stop1 - start)+ovrflcntr*65536); //calculate total time in seconds
+	    tds = (float)total / 1000.0;
+
+	    insec = (float)1.0 / tds;
+	    mph = (float)insec * conversion;       //FICXXX
+	    floattostring(mph);
+	    uartPutstring("The speed is");
+	    waitms(10);
+	    uartPutchar(148);                   //put cursor to position 0 on line 1
+	    waitms(10);
+	    uartPutstring(n);                   //put string of f.p. number "a"
+	    waitms(10);
+	    uartPutstring(".");                   //
+	    waitms(10);
+	    uartPutstring(m);                   //
+	    waitms(10);
+	    uartPutstring(" MPH");
+	    waitms(5000);
+	    uartPutchar(12);                    //clear LCD
+	    waitms(10);
+
+	}
+
+	while(1);
+	return 0;
+}
+
+
+void floattostring(float a){
+
+    int i1, i2;
+    int j1, j2;
+    float b,c,d;
+
+    i1= (int) (a/10);                   // following lines convert "a" to string
+    n[0] = i1+48;                       //
+    b = a-i1*10.0;                      //
+    i2 = (int) b;                       //
+    n[1] = i2+48;                       //
+                                        //
+    n[2] = 0;                           //
+                                        //
+    c=b-i2;                             //
+    j1 = (int) (c*10.0);                //
+    m[0] =j1+48;                        //
+                                        //
+    d=c-j1/10.0;                        //
+    j2= (int) (d*100);                  //
+    m[1] = j2+48;                       //
+                                        //
+    m[2] = 0;                           //
+
+}
+
+void waitms(int ms){
+    int k;
+    for(k = ms; k > 0; k--){
+    dly1ms();
+    }
+}
+
+void dly1ms(void){
+    __delay_cycles(TC1MS);
+}
+
+#pragma vector=TIMER0_A1_VECTOR
+
+    __interrupt void timer_isr(void){
+
+    ++ovrflcntr;
+
+    TACTL &= ~TAIFG;
+
+}
